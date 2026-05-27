@@ -93,12 +93,14 @@ different file with `-Ddiskspace.settings.file=/path/to/file`.
 
 ### Coloring modes
 
-Coloring is pluggable. Two modes ship in-tree today:
+Coloring is pluggable. Three modes ship in-tree today:
 
 - **Classic** — each top-level folder gets a saturated hue from a 12-colour palette and its descendants inherit that
   hue, lightening toward the rim. Large files are neutral grey so folder structure stays the focal point.
 - **Black & White** — folders are pure grayscale (darker with depth); single large files glow bright red and the
   *Smaller files* aggregate is orange. Useful for spotting heavy hitters without colour cues from siblings.
+- **Branch Families** — groups major folder branches into shared colour families. Single-dominant-child funnels are
+  muted so the first meaningful branching level gets the strongest palette colours.
 
 Press `C` to cycle the current tab's mode in-session, or set the persistent default in Preferences.
 

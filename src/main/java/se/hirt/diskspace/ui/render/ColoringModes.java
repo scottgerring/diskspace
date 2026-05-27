@@ -40,7 +40,8 @@ import java.util.Locale;
  */
 public final class ColoringModes {
 
-	private static final List<ColoringMode> MODES = List.of(new ClassicColoringMode(), new BlackAndWhiteColoringMode());
+	private static final List<ColoringMode> MODES = List.of(new ClassicColoringMode(), new BlackAndWhiteColoringMode(),
+			new BranchFamiliesColoringMode());
 
 	private ColoringModes() {
 	}
