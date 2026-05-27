@@ -82,6 +82,8 @@ public final class BranchFamiliesColorResolver implements NodeColorResolver {
 	private DirectoryNode scanRoot;
 	private DirectoryNode hiddenNode;
 	private DirectoryNode effectivePaletteRoot;
+	/** True if a scan is currently in progress; when true, colours recompute every frame with live ranks. */
+	private boolean scanActive = false;
 
 	public BranchFamiliesColorResolver(ColorScheme scheme, ToIntFunction<DirectoryNode> rankOf) {
 		this.scheme = scheme;
@@ -95,6 +97,7 @@ public final class BranchFamiliesColorResolver implements NodeColorResolver {
 		topLevelPaletteIdx.clear();
 		finalizedTopLevels.clear();
 		effectivePaletteRoot = null;
+		scanActive = true;
 	}
 
 	/** Update the synthetic "Hidden" node reference so it can be excluded from per-tick stabilisation. */
@@ -103,14 +106,16 @@ public final class BranchFamiliesColorResolver implements NodeColorResolver {
 	}
 
 	/**
-	 * Called when a scan completes: drop colours and the top-level palette allocation so the final size-order picks the
-	 * palette indices in size-descending order. A node briefly cached as rank-0 stays cached as rank-0 unless we
-	 * invalidate; same for the top-level palette allocation.
+	 * Called when a scan completes: drop colours and recompute the effective palette root with final data. The funnel
+	 * walk was already being re-evaluated every frame during the scan, so the final recompute here is a no-op in the
+	 * common case and prevents any residual mismatch. Top-level palette allocations stay so anchor hues don't shift.
 	 */
 	public void onScanComplete() {
 		colorCache.clear();
-		topLevelPaletteIdx.clear();
-		effectivePaletteRoot = null;
+		if (scanRoot != null) {
+			effectivePaletteRoot = findEffectivePaletteRoot(scanRoot);
+		}
+		scanActive = false;
 	}
 
 	/**
@@ -136,14 +141,27 @@ public final class BranchFamiliesColorResolver implements NodeColorResolver {
 	public Color colorFor(DirectoryNode node) {
 		if (node == null || node == scanRoot)
 			return scheme.surface();
-		Color cached = colorCache.get(node);
-		if (cached != null)
-			return cached;
 
-		if (effectivePaletteRoot == null && scanRoot != null) {
+		// Recompute the effective palette root during active scans. Early in a scan only one child of each level has been
+		// discovered, which fools the funnel walk into going too deep. As more siblings become significant the funnel
+		// walk gradually retreats; doing it every render makes that retreat smooth instead of snapping at completion.
+		if (scanActive && scanRoot != null) {
+			DirectoryNode newRoot = findEffectivePaletteRoot(scanRoot);
+			if (newRoot != effectivePaletteRoot) {
+				effectivePaletteRoot = newRoot;
+				colorCache.clear();
+			}
+		} else if (effectivePaletteRoot == null && scanRoot != null) {
 			effectivePaletteRoot = findEffectivePaletteRoot(scanRoot);
 		}
 		DirectoryNode paletteRoot = effectivePaletteRoot != null ? effectivePaletteRoot : scanRoot;
+
+		// During active scans, skip cache so colours recompute with live ranks.
+		if (!scanActive) {
+			Color cached = colorCache.get(node);
+			if (cached != null)
+				return cached;
+		}
 
 		Color computed;
 		if (node.isFileSector()) {
@@ -158,12 +176,15 @@ public final class BranchFamiliesColorResolver implements NodeColorResolver {
 			// Family root at the effective palette level — palette pick by name with collision avoidance.
 			computed = SectorPalette.branchFamilyAtIndex(allocateTopLevelIdx(node), 0);
 		} else {
-			DirectoryNode familyRoot = familyRootFor(node, paletteRoot);
-			int rootIdx = allocateTopLevelIdx(familyRoot);
+			// Recursive local hue lanes: derive child colour from parent colour, creating fan-out within neighbourhoods.
+			Color parentColor = colorFor(node.parent());
 			int d = depthFromScanRoot(node);
-			computed = SectorPalette.branchFamilyForSubtree(rootIdx, node.name(), Math.max(0, d - 1), rankOf.applyAsInt(node));
+			computed = SectorPalette.branchFamilyChildColor(parentColor, node.name(), Math.max(0, d - 1), rankOf.applyAsInt(node));
 		}
-		colorCache.put(node, computed);
+		// Only cache if scan is complete; during active scans, recompute every frame.
+		if (!scanActive) {
+			colorCache.put(node, computed);
+		}
 		return computed;
 	}
 
@@ -175,14 +196,6 @@ public final class BranchFamiliesColorResolver implements NodeColorResolver {
 				return true;
 		}
 		return false;
-	}
-
-	private DirectoryNode familyRootFor(DirectoryNode node, DirectoryNode paletteRoot) {
-		DirectoryNode familyRoot = node;
-		while (familyRoot.parent() != null && familyRoot.parent() != paletteRoot) {
-			familyRoot = familyRoot.parent();
-		}
-		return familyRoot;
 	}
 
 	private DirectoryNode findEffectivePaletteRoot(DirectoryNode root) {

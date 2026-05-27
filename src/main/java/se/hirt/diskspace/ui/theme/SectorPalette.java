@@ -47,11 +47,16 @@ public final class SectorPalette {
 			Color.web("#E0A04F"), Color.web("#A8C95F"), Color.web("#5FC982"), Color.web("#7AB8A0"),
 			Color.web("#6B8FB5"),};
 
-	/** Separate palette used by Branch Families. Initially mirrors Classic; hue tuning lives with that mode's colour change. */
-	private static final Color[] BRANCH_FAMILY_BASE = {Color.web("#5BC9C9"), Color.web("#4DA8E0"), Color.web("#6B6FE0"),
-			Color.web("#9466E0"), Color.web("#C95FB7"), Color.web("#D85A8E"), Color.web("#E07260"),
-			Color.web("#E0A04F"), Color.web("#A8C95F"), Color.web("#5FC982"), Color.web("#7AB8A0"),
-			Color.web("#6B8FB5"),};
+	/**
+	 * Branch Families anchor hues: vivid, evenly-spaced, and numerous enough that common branch families avoid obvious
+	 * collisions before the allocator has to wrap. Descendants derive recursively from their parent's colour via
+	 * {@link #branchFamilyChildColor}, so each subtree fans out into local hue lanes rather than collapsing to one anchor.
+	 */
+	private static final Color[] BRANCH_FAMILY_BASE = {Color.web("#E02C2C"), Color.web("#E0682C"), Color.web("#E0A42C"),
+			Color.web("#E0E02C"), Color.web("#A4E02C"), Color.web("#68E02C"), Color.web("#2CE02C"),
+			Color.web("#2CE068"), Color.web("#2CE0A4"), Color.web("#2CE0E0"), Color.web("#2CA4E0"),
+			Color.web("#2C68E0"), Color.web("#2C2CE0"), Color.web("#682CE0"), Color.web("#A42CE0"),
+			Color.web("#E02CE0"), Color.web("#E02CA4"), Color.web("#E02C68"),};
 
 	private SectorPalette() {
 	}
@@ -103,33 +108,43 @@ public final class SectorPalette {
 	}
 
 	/**
-	 * Derives a Branch Families descendant colour from an already-allocated family palette index. This keeps every folder
-	 * below a family root recognisably in that root's colour family while still varying siblings enough to distinguish
-	 * neighbouring sectors.
+	 * Derives a Branch Families child colour from its parent colour, creating local hue lanes that fan out from the parent
+	 * while staying coherent within a neighbourhood. Each sibling rank gets a distinct hue offset from the parent; deeper
+	 * descendants inherit from their parent's colour and repeat the process, creating recursive local lanes rather than
+	 * flattening all descendants to a single family anchor.
 	 */
-	public static Color branchFamilyForSubtree(int rootIndex, String childName, int depth, int siblingRank) {
-		Color base = BRANCH_FAMILY_BASE[Math.floorMod(rootIndex, BRANCH_FAMILY_BASE.length)];
+	public static Color branchFamilyChildColor(Color parentColor, String childName, int depth, int siblingRank) {
 		int hash = childName == null ? 0 : childName.hashCode();
 
-		// Keep the branch family hue coherent, but make depth read clearly. This is intentionally more value-driven than
-		// hue-driven: drilled-in views should stay recognisably one family while rings and sibling lanes remain legible.
-		double brightFactor = 1.10 - depth * 0.11;
-		double saturationFactor = 1.0 - depth * 0.045;
+		// Local hue lane spread shrinks with depth, so descendants stay coherent within neighborhoods.
+		double spread = Math.max(8.0, 42.0 - depth * 6.0);
 
-		if (siblingRank >= 0) {
-			// Alternate sibling lanes light/dark rather than monotonically darkening them. Adjacent sectors become easier to
-			// distinguish, while the clamp keeps tiny many-sibling directories from turning into zebra stripes.
-			double laneMagnitude = Math.min(0.18, 0.08 + (siblingRank % 4) * 0.035);
-			double laneSign = (siblingRank % 2 == 0) ? 1.0 : -1.0;
-			brightFactor += laneSign * laneMagnitude;
-			// Larger ranks recede slightly in saturation, which separates small outer spokes without changing family hue.
-			saturationFactor -= Math.min(0.18, siblingRank * 0.018);
-		}
+		// Rank-based hue offset: even ranks positive, odd negative, with magnitude increasing in pairs.
+		// This creates alternating lanes around the parent hue without overwhelming it.
+		double rankHueOffset = switch (siblingRank % 8) {
+			case 0 -> 0.0;
+			case 1 -> -spread;
+			case 2 -> spread;
+			case 3 -> -spread * 0.65;
+			case 4 -> spread * 0.65;
+			case 5 -> -spread * 0.35;
+			case 6 -> spread * 0.35;
+			case 7 -> -spread * 0.20;
+			default -> 0.0;
+		};
 
-		double hueJitter = Math.floorMod(hash, 13) - 6.0; // -6° .. +6°: enough to avoid flatness, not enough to rainbow.
-		brightFactor = Math.max(0.48, Math.min(1.18, brightFactor));
-		saturationFactor = Math.max(0.62, Math.min(1.0, saturationFactor));
-		return base.deriveColor(hueJitter, saturationFactor, brightFactor, 1.0);
+		double nameJitter = Math.floorMod(hash, 13) - 6.0; // -6° .. +6°
+		double hueShift = rankHueOffset + nameJitter;
+
+		// Gentle depth modulation. DaisyDisk keeps outer rings clearly visible — we previously darkened too aggressively
+		// (0.12/level) which crushed value at depth 4+. With a 0.05 slope and a 0.80 floor, descendants stay pastel.
+		double brightFactor = 1.04 - depth * 0.05;
+		double saturationFactor = 1.0 - depth * 0.025;
+
+		brightFactor = Math.max(0.80, Math.min(1.12, brightFactor));
+		saturationFactor = Math.max(0.78, Math.min(1.0, saturationFactor));
+
+		return parentColor.deriveColor(hueShift, saturationFactor, brightFactor, 1.0);
 	}
 
 	/**
